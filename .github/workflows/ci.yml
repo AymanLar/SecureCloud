@@ -123,13 +123,13 @@ jobs:
 
       - name: Download and verify Gitleaks
         run: |
-          curl -sSL -o gitleaks.tar.gz \
+          curl -sSL -o "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
           curl -sSL -o gitleaks_checksums.txt \
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
           grep "linux_x64.tar.gz" gitleaks_checksums.txt > gitleaks.sum
           sha256sum -c gitleaks.sum
-          tar -xzf gitleaks.tar.gz gitleaks
+          tar -xzf "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" gitleaks
 
       - name: Gitleaks secret scan
         run: ./gitleaks detect --source . --redact --exit-code 1 --verbose
@@ -143,13 +143,13 @@ jobs:
 
       - name: Download and verify Trivy
         run: |
-          curl -sSL -o trivy.tar.gz \
+          curl -sSL -o "trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
             "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
           curl -sSL -o trivy_checksums.txt \
             "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_checksums.txt"
           grep "Linux-64bit.tar.gz" trivy_checksums.txt > trivy.sum
           sha256sum -c trivy.sum
-          tar -xzf trivy.tar.gz trivy
+          tar -xzf "trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" trivy
 
       - name: Stage dev and tools manifests for scanning
         run: |
@@ -208,13 +208,13 @@ jobs:
 
       - name: Download and verify Trivy
         run: |
-          curl -sSL -o trivy.tar.gz \
+          curl -sSL -o "trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
             "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
           curl -sSL -o trivy_checksums.txt \
             "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_checksums.txt"
           grep "Linux-64bit.tar.gz" trivy_checksums.txt > trivy.sum
           sha256sum -c trivy.sum
-          tar -xzf trivy.tar.gz trivy
+          tar -xzf "trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" trivy
 
       - name: Load images
         run: docker load < images.tar.gz

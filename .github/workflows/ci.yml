@@ -1,0 +1,225 @@
+# SecureCloud CI/CD + shift-left security pipeline.
+#
+# Pipeline (each job runs only after the previous one succeeds):
+#
+#   lint  ->  unit-tests  ->  sast  ->  secret-scan  ->  dependency-scan  ->  docker-build  ->  container-scan
+#
+# Tool versions are pinned in `env` and must be kept in sync with the
+# locally reproducible checks documented in docs/SECURITY-PIPELINE.md.
+# Local equivalents for every check are listed in that document.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "22"
+  RUFF_VERSION: "0.16.10"
+  SEMGREP_VERSION: "1.180.0"
+  GITLEAKS_VERSION: "8.30.1"
+  TRIVY_VERSION: "0.75.0"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            app/backend/requirements.txt
+            app/backend/requirements-dev.txt
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: app/frontend/package-lock.json
+
+      - name: Install ruff
+        run: python -m pip install --quiet ruff==${{ env.RUFF_VERSION }}
+
+      - name: ruff format --check (backend)
+        working-directory: app/backend
+        run: ruff format --check .
+
+      - name: ruff check (backend)
+        working-directory: app/backend
+        run: ruff check .
+
+      - name: Install frontend dependencies
+        working-directory: app/frontend
+        run: npm ci
+
+      - name: eslint (frontend)
+        working-directory: app/frontend
+        run: npm run lint
+
+  unit-tests:
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            app/backend/requirements.txt
+            app/backend/requirements-dev.txt
+
+      - name: Install dependencies
+        working-directory: app/backend
+        run: python -m pip install --quiet -r requirements-dev.txt
+
+      - name: Run pytest
+        working-directory: app/backend
+        run: python -m pytest
+
+  sast:
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Semgrep
+        run: python -m pip install --quiet semgrep==${{ env.SEMGREP_VERSION }}
+
+      - name: Semgrep SAST scan
+        run: semgrep scan --config p/ci --error --metrics off \
+            --exclude .venv --exclude node_modules --exclude .next --exclude .git \
+            app/backend app/frontend
+
+  secret-scan:
+    needs: sast
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Download and verify Gitleaks
+        run: |
+          curl -sSL -o gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSL -o gitleaks_checksums.txt \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          grep "linux_x64.tar.gz" gitleaks_checksums.txt > gitleaks.sum
+          sha256sum -c gitleaks.sum
+          tar -xzf gitleaks.tar.gz gitleaks
+
+      - name: Gitleaks secret scan
+        run: ./gitleaks detect --source . --redact --exit-code 1 --verbose
+
+  dependency-scan:
+    needs: secret-scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Download and verify Trivy
+        run: |
+          curl -sSL -o trivy.tar.gz \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -sSL -o trivy_checksums.txt \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_checksums.txt"
+          grep "Linux-64bit.tar.gz" trivy_checksums.txt > trivy.sum
+          sha256sum -c trivy.sum
+          tar -xzf trivy.tar.gz trivy
+
+      - name: Stage dev and tools manifests for scanning
+        run: |
+          # Trivy auto-detects files named exactly `requirements.txt`. The
+          # development and tooling manifests are pinned separately, so stage
+          # them under detectable names (in paths that avoid Trivy's dev/test
+          # dependency heuristics).
+          mkdir -p deps-scan/extra deps-scan/tools
+          grep -v "^-r " app/backend/requirements-dev.txt > deps-scan/extra/requirements.txt
+          cp requirements-tools.txt deps-scan/tools/requirements.txt
+
+      - name: Scan auto-detected manifests
+        run: ./trivy fs --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
+            --exit-code 1 --skip-dirs node_modules --skip-dirs .next --skip-dirs .git .
+
+      - name: Scan dev and tools manifests
+        run: ./trivy fs --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
+            --exit-code 1 --skip-dirs .git deps-scan
+
+  docker-build:
+    needs: dependency-scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Build images
+        run: |
+          # The compose file requires POSTGRES_* variables. Values are
+          # generated per-run and never committed anywhere.
+          export POSTGRES_USER="securecloud_ci"
+          export POSTGRES_PASSWORD="$(openssl rand -hex 32)"
+          export POSTGRES_DB="securecloud"
+          docker compose build backend frontend
+
+      - name: Export images
+        run: docker save securecloud-backend securecloud-frontend | gzip > images.tar.gz
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: images
+          path: images.tar.gz
+          retention-days: 1
+
+  container-scan:
+    needs: docker-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: images
+          path: .
+
+      - name: Download and verify Trivy
+        run: |
+          curl -sSL -o trivy.tar.gz \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -sSL -o trivy_checksums.txt \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_checksums.txt"
+          grep "Linux-64bit.tar.gz" trivy_checksums.txt > trivy.sum
+          sha256sum -c trivy.sum
+          tar -xzf trivy.tar.gz trivy
+
+      - name: Load images
+        run: docker load < images.tar.gz
+
+      - name: Scan backend image
+        run: ./trivy image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
+            --exit-code 1 securecloud-backend
+
+      - name: Scan frontend image
+        run: ./trivy image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
+            --exit-code 1 securecloud-frontend

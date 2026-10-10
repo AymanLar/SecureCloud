@@ -13,9 +13,7 @@ def test_create_deployment(client: TestClient, created_project: dict) -> None:
 
 
 def test_create_deployment_unknown_project(client: TestClient) -> None:
-    response = client.post(
-        "/api/deployments", json={"project_id": 9999, "environment": "staging"}
-    )
+    response = client.post("/api/deployments", json={"project_id": 9999, "environment": "staging"})
     assert response.status_code == 404
     assert response.json()["detail"] == "project not found"
 

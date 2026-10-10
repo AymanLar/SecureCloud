@@ -1,0 +1,6 @@
+# Local/CI code quality and security tooling - NOT application dependencies.
+# gitleaks and trivy are standalone binaries; see docs/SECURITY-PIPELINE.md.
+# Keep versions in sync with .github/workflows/ci.yml.
+
+ruff==0.16.10
+semgrep==1.180.0

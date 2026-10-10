@@ -12,9 +12,7 @@ def test_create_project(client: TestClient, created_user: dict) -> None:
 
 
 def test_create_project_unknown_owner(client: TestClient) -> None:
-    response = client.post(
-        "/api/projects", json={"name": "orphan", "owner_id": 9999}
-    )
+    response = client.post("/api/projects", json={"name": "orphan", "owner_id": 9999})
     assert response.status_code == 404
     assert response.json()["detail"] == "owner not found"
 
@@ -38,7 +36,5 @@ def test_get_project_not_found(client: TestClient) -> None:
 
 
 def test_empty_project_name_rejected(client: TestClient, created_user: dict) -> None:
-    response = client.post(
-        "/api/projects", json={"name": "", "owner_id": created_user["id"]}
-    )
+    response = client.post("/api/projects", json={"name": "", "owner_id": created_user["id"]})
     assert response.status_code == 422

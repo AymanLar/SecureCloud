@@ -4,6 +4,7 @@
 
 .venv/
 venv/
+posts/
 __pycache__/
 *.py[cod]
 .pytest_cache/

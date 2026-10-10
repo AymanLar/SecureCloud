@@ -3,9 +3,10 @@
 A small cloud deployment management platform: users create cloud projects and trigger
 deployments for them.
 
-This repository is built in phases. **This is Phase 1: application + Docker.**
-Authentication, CI/CD pipelines, security scanning, and Kubernetes are intentionally
-not part of this phase.
+This repository is built in phases. **Phase 1: application + Docker** ✅
+and **Phase 2: CI/CD + shift-left security** ✅ are complete.
+Authentication, infrastructure-as-code, and Kubernetes are intentionally
+not part of these phases.
 
 ## Stack
 
@@ -15,7 +16,9 @@ not part of this phase.
 | Backend   | Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2         |
 | Database  | PostgreSQL 16                                           |
 | Tests     | pytest, FastAPI `TestClient`                            |
-| Runtime   | Docker Compose (local, $0, open source only)            |
+| Security  | ruff, ESLint, Semgrep, Gitleaks, Trivy                  |
+| CI/CD     | GitHub Actions (`.github/workflows/ci.yml`)             |
+| Runtime   | Docker Compose                                          |
 
 ## Architecture
 
@@ -45,6 +48,8 @@ not part of this phase.
 - Docker with Docker Compose v2 (`docker compose version`)
 
 That's it. Python, Node.js, and PostgreSQL are **not** required to run the app.
+(They are only needed for the optional local-development and security-check
+commands in the sections below.)
 
 ## Quick start
 
@@ -150,13 +155,36 @@ Tables: `users`, `projects`, `deployments`.
 - Data is persisted in the Docker volume `postgres-data`.
 - Migrations (e.g. Alembic) are deferred to a later phase — the schema is stable for Phase 1.
 
+## Security & CI/CD (Phase 2)
+
+On every push to `main` and on every pull request, GitHub Actions runs the
+pipeline in `docs/SECURITY-PIPELINE.md` — **every check below must pass**; a
+finding fails the workflow (no `continue-on-error` anywhere):
+
+```text
+lint  ->  unit-tests  ->  sast  ->  secret-scan  ->  dependency-scan  ->  docker-build  ->  container-scan
+ruff + eslint       pytest         semgrep        gitleaks          trivy fs          docker compose    trivy image
+```
+
+| Check               | Tool                | Threshold                             |
+| ------------------- | ------------------- | ------------------------------------- |
+| Lint                | ruff, ESLint        | any finding                          |
+| Unit tests          | pytest              | any failure (19 tests)               |
+| SAST                | Semgrep `p/ci`      | any finding                          |
+| Secret scan         | Gitleaks            | any leak                             |
+| Dependency scan     | Trivy fs            | HIGH/CRITICAL with a fix available   |
+| Container scan      | Trivy image         | HIGH/CRITICAL with a fix available   |
+
+The full scanner-by-scanner guide, failure criteria, fix instructions, and
+local reproduction commands live in [**docs/SECURITY-PIPELINE.md**](docs/SECURITY-PIPELINE.md).
+
 ## Running without Docker (development)
 
 Backend with SQLite (no PostgreSQL needed for local development — `DATABASE_URL` is
 required and simply points at a local file):
 
 ```bash
-cd backend
+cd app/backend
 python -m venv .venv
 # Linux/macOS: source .venv/bin/activate
 # Windows cmd: .venv\Scripts\activate
@@ -175,7 +203,7 @@ uvicorn app.main:app --reload
 Frontend:
 
 ```bash
-cd frontend
+cd app/frontend
 npm install
 npm run dev
 ```
@@ -189,7 +217,7 @@ Frontend runs on http://localhost:3000 and talks to the backend at
 ## Tests
 
 ```bash
-cd backend
+cd app/backend
 pip install -r requirements-dev.txt
 pytest          # 19 tests, < 1s
 ```
@@ -210,6 +238,13 @@ Everything documented here has been run and verified locally:
 | Backend tests             | 19/19 passed (`pytest`)                         |
 | Frontend production build | `next build` clean (TypeScript + compile)       |
 | Frontend dev flow         | `npm run dev` serves the dashboard              |
+| Backend lint              | `ruff check` + `ruff format --check` clean      |
+| Frontend lint             | `eslint .` clean (Next.js core-web-vitals + TS) |
+| SAST                      | Semgrep `p/ci`: 0 findings (50 rules, 41 files) |
+| Secret scan               | Gitleaks: no leaks (git history + working tree) |
+| Dependency scan           | Trivy fs: 0 HIGH/CRITICAL (fixable) over Python manifests + npm lockfile |
+| Container scan            | Trivy image: 0 fixable HIGH/CRITICAL on `securecloud-backend` and `securecloud-frontend` |
+| Workflow validation       | YAML parses + actionlint clean (+ chain verified) |
 
 ## Project structure
 
@@ -217,27 +252,34 @@ Everything documented here has been run and verified locally:
 SecureCloud/
 ├── docker-compose.yml          # db + backend + frontend
 ├── .env.example                # configuration template (copy to .env)
-├── backend/
-│   ├── Dockerfile
-│   ├── requirements.txt
-│   ├── requirements-dev.txt
-│   ├── pytest.ini
-│   ├── app/
-│   │   ├── main.py             # app factory, CORS, error handling, schema init
-│   │   ├── config.py           # settings from environment variables
-│   │   ├── database.py         # engine + session factory
-│   │   ├── models.py           # SQLAlchemy models
-│   │   ├── schemas.py          # Pydantic request/response schemas
-│   │   ├── deps.py             # DB session dependency
-│   │   └── routers/            # health, users, projects, deployments
-│   └── tests/                  # pytest suite
-└── frontend/
-    ├── Dockerfile
-    ├── lib/api.ts              # typed API client
-    └── app/                    # Next.js App Router UI
+├── requirements-tools.txt      # pinned dev/sec tools (keep in sync with ci.yml)
+├── .github/workflows/ci.yml    # Phase 2 pipeline (7 chained jobs)
+├── docs/SECURITY-PIPELINE.md   # scanner guide + local reproduction commands
+├── app/
+│   ├── backend/
+│   │   ├── Dockerfile
+│   │   ├── pyproject.toml      # ruff config
+│   │   ├── requirements.txt
+│   │   ├── requirements-dev.txt
+│   │   ├── pytest.ini
+│   │   ├── app/
+│   │   │   ├── main.py         # app factory, CORS, error handling, schema init
+│   │   │   ├── config.py       # settings from environment variables
+│   │   │   ├── database.py     # engine + session factory
+│   │   │   ├── models.py       # SQLAlchemy models
+│   │   │   ├── schemas.py      # Pydantic request/response schemas
+│   │   │   ├── deps.py         # DB session dependency
+│   │   │   └── routers/        # health, users, projects, deployments
+│   │   └── tests/              # pytest suite
+│   └── frontend/
+│       ├── Dockerfile
+│       ├── eslint.config.mjs   # ESLint flat config (core-web-vitals + TS)
+│       ├── lib/api.ts          # typed API client
+│       └── app/                # Next.js App Router UI
 ```
 
 ## Roadmap
 
-- **Phase 1 (this):** application + Docker + tests ✅
-- Later phases: authentication, CI/CD, security scanning, IaC/Kubernetes — not implemented yet.
+- **Phase 1:** application + Docker + tests ✅
+- **Phase 2:** CI/CD + shift-left security pipeline ✅
+- Later phases: authentication, infrastructure-as-code, Kubernetes — not implemented yet.

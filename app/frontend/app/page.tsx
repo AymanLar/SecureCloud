@@ -56,7 +56,10 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
-    void refresh();
+    const load = async () => {
+      await refresh();
+    };
+    void load();
   }, [refresh]);
 
   async function run(action: () => Promise<void>) {

@@ -27,6 +27,11 @@ COPY --from=builder /app/node_modules ./node_modules
 
 RUN chown -R nextjs:nodejs /app
 
+# Bundled npm is build-time-only; the runtime starts `next` with plain Node.
+# Removing it also clears its unpatchable npm-tooling CVEs from the image.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npx && \
+    rm -f /usr/local/bin/npm
+
 USER nextjs
 
 EXPOSE 3000

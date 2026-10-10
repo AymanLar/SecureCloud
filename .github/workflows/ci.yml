@@ -109,7 +109,8 @@ jobs:
         run: python -m pip install --quiet semgrep==${{ env.SEMGREP_VERSION }}
 
       - name: Semgrep SAST scan
-        run: semgrep scan --config p/ci --error --metrics off \
+        run: |
+          semgrep scan --config p/ci --error --metrics off \
             --exclude .venv --exclude node_modules --exclude .next --exclude .git \
             app/backend app/frontend
 
@@ -161,11 +162,13 @@ jobs:
           cp requirements-tools.txt deps-scan/tools/requirements.txt
 
       - name: Scan auto-detected manifests
-        run: ./trivy fs --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
+        run: |
+          ./trivy fs --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
             --exit-code 1 --skip-dirs node_modules --skip-dirs .next --skip-dirs .git .
 
       - name: Scan dev and tools manifests
-        run: ./trivy fs --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
+        run: |
+          ./trivy fs --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
             --exit-code 1 --skip-dirs .git deps-scan
 
   docker-build:
@@ -217,9 +220,11 @@ jobs:
         run: docker load < images.tar.gz
 
       - name: Scan backend image
-        run: ./trivy image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
+        run: |
+          ./trivy image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
             --exit-code 1 securecloud-backend
 
       - name: Scan frontend image
-        run: ./trivy image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
+        run: |
+          ./trivy image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
             --exit-code 1 securecloud-frontend

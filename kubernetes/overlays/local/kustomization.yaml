@@ -1,0 +1,20 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+  - ../../rbac
+  - ../../network-policies
+  - ../../ingress
+
+namespace: securecloud
+
+# secret.env is NOT committed to source control. scripts/deploy.sh generates
+# it (once) from .env / a random password. It must contain:
+#   POSTGRES_PASSWORD=...
+#   DATABASE_URL=postgresql+psycopg://<user>:<pw>@securecloud-postgres:5432/<db>
+secretGenerator:
+  - name: securecloud-app
+    envs:
+      - secret.env
+    type: Opaque

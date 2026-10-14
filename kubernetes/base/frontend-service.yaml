@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: securecloud-frontend
+  namespace: securecloud
+  labels:
+    app: securecloud-frontend
+    app.kubernetes.io/part-of: securecloud
+spec:
+  selector:
+    app: securecloud-frontend
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http

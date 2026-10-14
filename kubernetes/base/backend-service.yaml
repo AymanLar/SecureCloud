@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: securecloud-backend
+  namespace: securecloud
+  labels:
+    app: securecloud-backend
+    app.kubernetes.io/part-of: securecloud
+spec:
+  selector:
+    app: securecloud-backend
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http

@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: securecloud-config
+  namespace: securecloud
+  labels:
+    app.kubernetes.io/part-of: securecloud
+data:
+  # Non-secret application configuration. Secrets (passwords, DATABASE_URL)
+  # live in a generated Secret, never in source control.
+  APP_NAME: "SecureCloud API"
+  ENVIRONMENT: "development"
+  # Browser origins allowed by the backend CORS policy. The main origin is the
+  # local ingress URL (see scripts/lib.sh: K3D_HTTP_PORT).
+  CORS_ORIGINS: "http://localhost:8080,http://localhost,http://securecloud.localhost:8080"
+  POSTGRES_USER: "securecloud"
+  POSTGRES_DB: "securecloud"

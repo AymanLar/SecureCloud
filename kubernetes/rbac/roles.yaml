@@ -1,0 +1,59 @@
+# Every workload runs under its own ServiceAccount, and no workload needs
+# to talk to the Kubernetes API. Each account is therefore bound to an empty
+# Role: even if a pod's credentials leak, it can do nothing in the cluster.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: securecloud-app
+  namespace: securecloud
+  labels:
+    app.kubernetes.io/part-of: securecloud
+rules: []
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: securecloud-backend
+  namespace: securecloud
+  labels:
+    app.kubernetes.io/part-of: securecloud
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: securecloud-app
+subjects:
+  - kind: ServiceAccount
+    name: securecloud-backend
+    namespace: securecloud
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: securecloud-frontend
+  namespace: securecloud
+  labels:
+    app.kubernetes.io/part-of: securecloud
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: securecloud-app
+subjects:
+  - kind: ServiceAccount
+    name: securecloud-frontend
+    namespace: securecloud
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: securecloud-postgres
+  namespace: securecloud
+  labels:
+    app.kubernetes.io/part-of: securecloud
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: securecloud-app
+subjects:
+  - kind: ServiceAccount
+    name: securecloud-postgres
+    namespace: securecloud

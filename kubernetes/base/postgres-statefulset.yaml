@@ -1,0 +1,109 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: securecloud-postgres
+  namespace: securecloud
+  labels:
+    app: securecloud-postgres
+    app.kubernetes.io/part-of: securecloud
+spec:
+  serviceName: securecloud-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: securecloud-postgres
+  template:
+    metadata:
+      labels:
+        app: securecloud-postgres
+        app.kubernetes.io/part-of: securecloud
+    spec:
+      serviceAccountName: securecloud-postgres
+      securityContext:
+        runAsNonRoot: true
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres
+          image: postgres:16.15-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: securecloud-config
+                  key: POSTGRES_USER
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: securecloud-config
+                  key: POSTGRES_DB
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: securecloud-app
+                  key: POSTGRES_PASSWORD
+            # Use a PGDATA subdir under the PVC instead of the image's built-in
+            # /var/lib/postgresql/data (declared as VOLUME in the image, owned by
+            # uid 70). Mounting the PVC at /var/lib/postgresql leaves `data` on a
+            # throwaway runtime volume; a fresh subdir is created by the postgres
+            # user (container uid 999) and therefore initdb can own and chmod it.
+            - name: PGDATA
+              value: /var/lib/postgresql/pgdata
+          securityContext:
+            # postgres uid/gid in the official image.
+            runAsUser: 999
+            runAsGroup: 999
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - exec pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - exec pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 3
+          volumeMounts:
+            # Mount the PVC at the parent; PGDATA points to a subdir the postgres
+            # user creates itself, so initdb can chmod it (see PGDATA env note).
+            - name: data
+              mountPath: /var/lib/postgresql
+            # Writable socket/tmp dir owned by the pod's runAsUser.
+            - name: run
+              mountPath: /var/run/postgresql
+      volumes:
+        - name: run
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: 2Gi

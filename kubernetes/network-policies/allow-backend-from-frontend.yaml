@@ -1,0 +1,33 @@
+# The API is reachable from the frontend workload and from the ingress
+# controller (Traefik), which proxies /api/* traffic directly.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-backend-ingress
+  namespace: securecloud
+  labels:
+    app.kubernetes.io/part-of: securecloud
+spec:
+  podSelector:
+    matchLabels:
+      app: securecloud-backend
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: securecloud-frontend
+      ports:
+        - protocol: TCP
+          port: 8000
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - protocol: TCP
+          port: 8000

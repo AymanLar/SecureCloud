@@ -15,3 +15,6 @@ out/
 npm-debug.log*
 
 .DS_Store
+
+# Kubernetes: generated local secrets (never commit)
+kubernetes/overlays/*/secret.env

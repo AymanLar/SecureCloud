@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: securecloud-backend
+  namespace: securecloud
+  labels:
+    app: securecloud-backend
+    app.kubernetes.io/part-of: securecloud
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: securecloud-backend
+  template:
+    metadata:
+      labels:
+        app: securecloud-backend
+        app.kubernetes.io/part-of: securecloud
+    spec:
+      serviceAccountName: securecloud-backend
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: backend
+          image: securecloud-backend:3.0.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: securecloud-config
+          env:
+            # Full DSN including credentials; supplied by the generated Secret.
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: securecloud-app
+                  key: DATABASE_URL
+          securityContext:
+            runAsUser: 999
+            runAsGroup: 999
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            failureThreshold: 30
+            periodSeconds: 5
+          readinessProbe:
+            # Traffic only routes here when the database is reachable.
+            httpGet:
+              path: /api/health/db
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 3
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

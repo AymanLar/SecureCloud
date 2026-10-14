@@ -1,0 +1,23 @@
+# PostgreSQL only accepts connections from the backend workload, on its
+# application port only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-postgres-from-backend
+  namespace: securecloud
+  labels:
+    app.kubernetes.io/part-of: securecloud
+spec:
+  podSelector:
+    matchLabels:
+      app: securecloud-postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: securecloud-backend
+      ports:
+        - protocol: TCP
+          port: 5432

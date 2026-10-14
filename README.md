@@ -3,10 +3,11 @@
 A small cloud deployment management platform: users create cloud projects and trigger
 deployments for them.
 
-This repository is built in phases. **Phase 1: application + Docker** ✅
-and **Phase 2: CI/CD + shift-left security** ✅ are complete.
-Authentication, infrastructure-as-code, and Kubernetes are intentionally
-not part of these phases.
+This repository is built in phases. **Phase 1: application + Docker** ✅,
+**Phase 2: CI/CD + shift-left security** ✅, and **Phase 3: local Kubernetes
+deployment** ✅ are complete. Authentication, infrastructure-as-code, and
+cluster observability/admission control are intentionally not part of these
+phases.
 
 ## Stack
 
@@ -18,7 +19,7 @@ not part of these phases.
 | Tests     | pytest, FastAPI `TestClient`                            |
 | Security  | ruff, ESLint, Semgrep, Gitleaks, Trivy                  |
 | CI/CD     | GitHub Actions (`.github/workflows/ci.yml`)             |
-| Runtime   | Docker Compose                                          |
+| Runtime   | Docker Compose **and** Kubernetes (k3d, Phase 3)        |
 
 ## Architecture
 
@@ -178,6 +179,25 @@ ruff + eslint       pytest         semgrep        gitleaks          trivy fs    
 The full scanner-by-scanner guide, failure criteria, fix instructions, and
 local reproduction commands live in [**docs/SECURITY-PIPELINE.md**](docs/SECURITY-PIPELINE.md).
 
+## Running on Kubernetes (Phase 3)
+
+The same application can run as a real Kubernetes workload on your machine with
+**k3d** (k3s in Docker): non-root containers, per-workload ServiceAccounts bound
+to an empty Role, resource limits, probes, read-only root filesystems, an empty
+Secrets boundary, and a Traefik ingress.
+
+```bash
+make cluster-up       # or: bash scripts/cluster-up.sh   (create the k3d cluster)
+make deploy           # or: bash scripts/deploy.sh       (build images, secrets, apply, rollout)
+make verify           # or: bash scripts/verify.sh       (T1-T6 end-to-end checks)
+make status           # or: bash scripts/status.sh       (cluster + workload state)
+make logs             # or: bash scripts/logs.sh         (tail pod logs)
+```
+
+The app then serves at http://localhost:8080. Full manifest walkthrough,
+security posture, troubleshooting, and the k3d-vs-kind decision are documented
+in [**docs/PHASE-3-KUBERNETES.md**](docs/PHASE-3-KUBERNETES.md).
+
 ## Running without Docker (development)
 
 Backend with SQLite (no PostgreSQL needed for local development — `DATABASE_URL` is
@@ -245,6 +265,7 @@ Everything documented here has been run and verified locally:
 | Dependency scan           | Trivy fs: 0 HIGH/CRITICAL (fixable) over Python manifests + npm lockfile |
 | Container scan            | Trivy image: 0 fixable HIGH/CRITICAL on `securecloud-backend` and `securecloud-frontend` |
 | Workflow validation       | YAML parses + actionlint clean (+ chain verified) |
+| Kubernetes (k3d)          | cluster up; 3 workloads Ready; ingress /api + / serve; backend→PG read/write via Secret DSN (T1–T6) |
 
 ## Project structure
 
@@ -253,8 +274,18 @@ SecureCloud/
 ├── docker-compose.yml          # db + backend + frontend
 ├── .env.example                # configuration template (copy to .env)
 ├── requirements-tools.txt      # pinned dev/sec tools (keep in sync with ci.yml)
+├── Makefile                    # Phase 3 helpers: cluster-up/down, deploy, status, logs, verify
 ├── .github/workflows/ci.yml    # Phase 2 pipeline (7 chained jobs)
-├── docs/SECURITY-PIPELINE.md   # scanner guide + local reproduction commands
+├── docs/
+│   ├── SECURITY-PIPELINE.md    # scanner guide + local reproduction commands
+│   └── PHASE-3-KUBERNETES.md   # k3d deployment guide + security posture
+├── scripts/                    # Phase 3 shell helpers (lib, cluster-up/down, deploy, status, logs, verify)
+├── kubernetes/                 # Phase 3 manifests
+│   ├── base/                   # namespaced workloads (Deployments, StatefulSet, Services)
+│   ├── rbac/                   # per-workload ServiceAccounts + empty Role
+│   ├── network-policies/       # default-deny + explicit allows (needs a CNI that enforces)
+│   ├── ingress/                # Traefik ingress (/api, /)
+│   └── overlays/local/         # kustomize overlay + secretGenerator (secret.env, gitignored)
 ├── app/
 │   ├── backend/
 │   │   ├── Dockerfile
@@ -282,4 +313,6 @@ SecureCloud/
 
 - **Phase 1:** application + Docker + tests ✅
 - **Phase 2:** CI/CD + shift-left security pipeline ✅
-- Later phases: authentication, infrastructure-as-code, Kubernetes — not implemented yet.
+- **Phase 3:** local Kubernetes deployment (k3d) ✅
+- Later phases: authentication, infrastructure-as-code, cluster observability
+  & admission control (Kyverno/Falco/Cosign/Prometheus) — not implemented yet.

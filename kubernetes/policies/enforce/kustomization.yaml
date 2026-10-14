@@ -1,0 +1,18 @@
+# Enforce overlay: take the audit baseline and flip every ClusterPolicy to
+# validationFailureAction: Enforce. Admission then REJECTS violating manifests
+# instead of only recording a PolicyReport.
+#
+#   kubectl apply -k kubernetes/policies/enforce
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../base
+
+patches:
+  - target:
+      kind: ClusterPolicy
+    patch: |-
+      - op: replace
+        path: /spec/validationFailureAction
+        value: Enforce

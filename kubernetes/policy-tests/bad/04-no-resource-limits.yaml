@@ -1,0 +1,32 @@
+# DELIBERATE VIOLATION - Policy 4 (resource limits).
+# No resources.limits at all -> an unbounded pod can starve the node.
+# Expected under enforcement: REJECTED by securecloud-require-resource-limits.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bad-no-limits
+  namespace: securecloud
+  labels:
+    securecloud.io/policy-test: bad
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bad-no-limits
+  template:
+    metadata:
+      labels:
+        app: bad-no-limits
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: app
+          image: securecloud-backend:3.0.0
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsUser: 1001
+            runAsGroup: 1001
+            capabilities:
+              drop:
+                - ALL

@@ -4,10 +4,11 @@ A small cloud deployment management platform: users create cloud projects and tr
 deployments for them.
 
 This repository is built in phases. **Phase 1: application + Docker** ✅,
-**Phase 2: CI/CD + shift-left security** ✅, and **Phase 3: local Kubernetes
-deployment** ✅ are complete. Authentication, infrastructure-as-code, and
-cluster observability/admission control are intentionally not part of these
-phases.
+**Phase 2: CI/CD + shift-left security** ✅, **Phase 3: local Kubernetes
+deployment** ✅, and **Phase 4: Kubernetes security & policy enforcement** ✅
+are complete. Authentication and infrastructure-as-code are intentionally not
+part of these phases, nor are runtime detection (Falco) or supply-chain signing
+(Cosign).
 
 ## Stack
 
@@ -18,6 +19,7 @@ phases.
 | Database  | PostgreSQL 16                                           |
 | Tests     | pytest, FastAPI `TestClient`                            |
 | Security  | ruff, ESLint, Semgrep, Gitleaks, Trivy                  |
+| Policy    | Kyverno (admission policies), K8s RBAC least privilege  |
 | CI/CD     | GitHub Actions (`.github/workflows/ci.yml`)             |
 | Runtime   | Docker Compose **and** Kubernetes (k3d, Phase 3)        |
 
@@ -198,6 +200,27 @@ The app then serves at http://localhost:8080. Full manifest walkthrough,
 security posture, troubleshooting, and the k3d-vs-kind decision are documented
 in [**docs/PHASE-3-KUBERNETES.md**](docs/PHASE-3-KUBERNETES.md).
 
+## Kubernetes security & policy enforcement (Phase 4)
+
+Admission policies from **Kyverno** enforce the cluster baseline secure-by-default:
+no root, no privilege escalation, drop all capabilities, resource limits, no
+`latest` tags, approved registries, no host networking, and no hostPath. Each
+policy ships with a deliberate violating manifest and a compliant one, and is
+tested in audit mode then enforced. RBAC is reviewed for least privilege (empty
+Role, no `cluster-admin`, no auto-mounted tokens).
+
+```bash
+make kyverno            # or: bash scripts/kyverno-install.sh   (install the engine)
+make policies-audit     # apply policies in audit mode (measure via PolicyReports)
+make policies-enforce   # block violations
+make policy-test        # or: bash scripts/policy-test.sh        (bad rejected, good accepted)
+make rbac-review        # or: bash scripts/rbac-review.sh        (least privilege)
+```
+
+Threat model, per-policy threat/bad-example/policy/expected-result/secure-version
+documentation, and the RBAC findings live in
+[**docs/PHASE-4-KUBERNETES-SECURITY.md**](docs/PHASE-4-KUBERNETES-SECURITY.md).
+
 ## Running without Docker (development)
 
 Backend with SQLite (no PostgreSQL needed for local development — `DATABASE_URL` is
@@ -266,6 +289,8 @@ Everything documented here has been run and verified locally:
 | Container scan            | Trivy image: 0 fixable HIGH/CRITICAL on `securecloud-backend` and `securecloud-frontend` |
 | Workflow validation       | YAML parses + actionlint clean (+ chain verified) |
 | Kubernetes (k3d)          | cluster up; 3 workloads Ready; ingress /api + / serve; backend→PG read/write via Secret DSN (T1–T6) |
+| K8s policy (Kyverno)      | 8 policies: audit reports violations; enforce rejects all 8 bad manifests, accepts the compliant one (`make policy-test`) |
+| K8s RBAC                  | least privilege confirmed: no ClusterRoleBinding, no cluster-admin, tokens not auto-mounted, sensitive verbs denied (`make rbac-review`) |
 
 ## Project structure
 
@@ -274,17 +299,20 @@ SecureCloud/
 ├── docker-compose.yml          # db + backend + frontend
 ├── .env.example                # configuration template (copy to .env)
 ├── requirements-tools.txt      # pinned dev/sec tools (keep in sync with ci.yml)
-├── Makefile                    # Phase 3 helpers: cluster-up/down, deploy, status, logs, verify
+├── Makefile                    # Phase 3/4 helpers: cluster-up/down, deploy, verify, kyverno, policies, rbac-review
 ├── .github/workflows/ci.yml    # Phase 2 pipeline (7 chained jobs)
 ├── docs/
-│   ├── SECURITY-PIPELINE.md    # scanner guide + local reproduction commands
-│   └── PHASE-3-KUBERNETES.md   # k3d deployment guide + security posture
-├── scripts/                    # Phase 3 shell helpers (lib, cluster-up/down, deploy, status, logs, verify)
-├── kubernetes/                 # Phase 3 manifests
+│   ├── SECURITY-PIPELINE.md         # scanner guide + local reproduction commands
+│   ├── PHASE-3-KUBERNETES.md        # k3d deployment guide + security posture
+│   └── PHASE-4-KUBERNETES-SECURITY.md # threat model, policies, RBAC, policy-as-code
+├── scripts/                    # shell helpers (lib, cluster-up/down, deploy, status, logs, verify, kyverno-install, policy-test, rbac-review)
+├── kubernetes/                 # manifests
 │   ├── base/                   # namespaced workloads (Deployments, StatefulSet, Services)
-│   ├── rbac/                   # per-workload ServiceAccounts + empty Role
+│   ├── rbac/                   # per-workload ServiceAccounts (no token) + empty Role
 │   ├── network-policies/       # default-deny + explicit allows (needs a CNI that enforces)
 │   ├── ingress/                # Traefik ingress (/api, /)
+│   ├── policies/               # Phase 4 Kyverno ClusterPolicies (base=audit, enforce/ overlay)
+│   ├── policy-tests/           # bad/ violations + good/ compliant example
 │   └── overlays/local/         # kustomize overlay + secretGenerator (secret.env, gitignored)
 ├── app/
 │   ├── backend/
@@ -314,5 +342,6 @@ SecureCloud/
 - **Phase 1:** application + Docker + tests ✅
 - **Phase 2:** CI/CD + shift-left security pipeline ✅
 - **Phase 3:** local Kubernetes deployment (k3d) ✅
-- Later phases: authentication, infrastructure-as-code, cluster observability
-  & admission control (Kyverno/Falco/Cosign/Prometheus) — not implemented yet.
+- **Phase 4:** Kubernetes security & policy enforcement (Kyverno + RBAC) ✅
+- Later phases: authentication, infrastructure-as-code, runtime detection
+  (Falco) & supply-chain signing (Cosign) — not implemented yet.

@@ -1,0 +1,15 @@
+# Kyverno admission policies for the SecureCloud baseline (Phase 4).
+#
+# Entry point for the AUDIT deployment (validationFailureAction: Audit). This is
+# what you install first to measure violations via PolicyReports before flipping
+# to enforcement:
+#
+#   kubectl apply -k kubernetes/policies            # this root -> audit
+#   kubectl apply -k kubernetes/policies/enforce    # enforce overlay
+#
+# See docs/PHASE-4-KUBERNETES-SECURITY.md for the threat model and tests.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - base

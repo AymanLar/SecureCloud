@@ -1,0 +1,44 @@
+# DELIBERATE VIOLATION - Policy 8 (host filesystem mounts).
+# Mounts the node's /etc via hostPath - a container-escape primitive.
+# Expected under enforcement: REJECTED by securecloud-disallow-host-path.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bad-host-path
+  namespace: securecloud
+  labels:
+    securecloud.io/policy-test: bad
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bad-host-path
+  template:
+    metadata:
+      labels:
+        app: bad-host-path
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: app
+          image: securecloud-backend:3.0.0
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsUser: 1001
+            runAsGroup: 1001
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          volumeMounts:
+            - name: host-etc
+              mountPath: /host-etc
+      volumes:
+        - name: host-etc
+          hostPath:
+            path: /etc
+            type: Directory

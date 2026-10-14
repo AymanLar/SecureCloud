@@ -1,0 +1,93 @@
+# Policy 1 - Containers must not run as root.
+#
+# Threat: a container running as UID 0 gets root inside its namespaces; combined
+# with a kernel/container-runtime bug or a writable host mount it becomes a
+# privilege-escalation and container-escape primitive.
+#
+# Control: require runAsNonRoot at the Pod level (kubelet then refuses to start
+# any container that would be root) and reject containers that explicitly set
+# runAsUser: 0 or runAsNonRoot: false.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: securecloud-disallow-root
+  labels:
+    app.kubernetes.io/part-of: securecloud
+  annotations:
+    policies.kyverno.io/title: Disallow Root
+    policies.kyverno.io/category: SecureCloud Baseline
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      Pods must set runAsNonRoot=true and no container may set runAsUser=0 or
+      runAsNonRoot=false.
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: require-pod-runasnonroot
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - kyverno
+      validate:
+        message: "Running as root is not allowed: set spec.securityContext.runAsNonRoot=true."
+        pattern:
+          spec:
+            securityContext:
+              runAsNonRoot: true
+
+    - name: container-not-root
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - kyverno
+      validate:
+        message: "Containers must not run as root: remove runAsUser=0 / runAsNonRoot=false."
+        pattern:
+          spec:
+            containers:
+              - =(securityContext):
+                  =(runAsUser): "!0"
+                  =(runAsNonRoot): "!false"
+
+    - name: init-container-not-root
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - kyverno
+      validate:
+        message: "Init containers must not run as root: remove runAsUser=0 / runAsNonRoot=false."
+        pattern:
+          spec:
+            =(initContainers):
+              - =(securityContext):
+                  =(runAsUser): "!0"
+                  =(runAsNonRoot): "!false"

@@ -1,0 +1,109 @@
+# Policy 5 - Deployments must not use the "latest" image tag.
+#
+# Threat: a floating tag ("latest" or no tag) makes deployments non-reproducible
+# and, worse, means an unrelated push/image overwrite silently changes what runs.
+# It defeats rollbacks and image pinning and undermines supply-chain integrity.
+#
+# Control: every image must carry an explicit tag and that tag must not be
+# "latest". (Digest pinning with @sha256: is also tagged explicitly.)
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: securecloud-disallow-latest-tag
+  labels:
+    app.kubernetes.io/part-of: securecloud
+  annotations:
+    policies.kyverno.io/title: Disallow Latest Image Tag
+    policies.kyverno.io/category: SecureCloud Baseline
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      Container images must use an explicit, immutable tag instead of latest or
+      no tag at all.
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: container-image-no-latest
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - kyverno
+      validate:
+        message: "Using ':latest' is not allowed; pin an explicit image tag."
+        pattern:
+          spec:
+            containers:
+              - image: "!*:latest"
+
+    - name: container-image-has-tag
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - kyverno
+      validate:
+        message: "An explicit image tag is required (image must not omit the tag)."
+        pattern:
+          spec:
+            containers:
+              - image: "*:*"
+
+    - name: initcontainer-image-no-latest
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - kyverno
+      validate:
+        message: "Using ':latest' is not allowed on init containers; pin an explicit image tag."
+        pattern:
+          spec:
+            =(initContainers):
+              - image: "!*:latest"
+
+    - name: initcontainer-image-has-tag
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - kyverno
+      validate:
+        message: "An explicit image tag is required on init containers."
+        pattern:
+          spec:
+            =(initContainers):
+              - image: "*:*"

@@ -1,0 +1,103 @@
+# Policy 8 - Host filesystem mounts must not be allowed unless explicitly justified.
+#
+# Threat: a hostPath volume mounts a node path into the pod. /var/run, /proc,
+# /sys or the container runtime socket give a workload control over the node and
+# neighbouring pods - the most common container-escape technique. Even read-only
+# hostPath exposure leaks node data.
+#
+# Control: hostPath volumes are denied. A legitimate need is expected to be
+# handled by a narrower mechanism (a CSI volume, a specific projected secret, or
+# a storage class) rather than raw host mounts. Exceptions, if ever needed,
+# belong in a Kyverno PolicyException - never a broad allow rule.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: securecloud-disallow-host-path
+  labels:
+    app.kubernetes.io/part-of: securecloud
+  annotations:
+    pod-policies.kyverno.io/autogen-controllers: none
+    policies.kyverno.io/title: Disallow Host Path
+    policies.kyverno.io/category: SecureCloud Baseline
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      hostPath volumes must not be used. Justify any exception through a
+      PolicyException rather than weakening this policy.
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: pod-host-path
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - kyverno
+      validate:
+        message: "HostPath volumes are not allowed; use a persistent volume or CSI driver instead."
+        deny:
+          conditions:
+            any:
+              - key: "{{ (request.object.spec.volumes || `[]`)[?hostPath] | length(@) }}"
+                operator: GreaterThan
+                value: 0
+
+    - name: controller-host-path
+      match:
+        any:
+          - resources:
+              kinds:
+                - Deployment
+                - StatefulSet
+                - DaemonSet
+                - Job
+                - ReplicaSet
+                - ReplicationController
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - kyverno
+      validate:
+        message: "HostPath volumes are not allowed; use a persistent volume or CSI driver instead."
+        deny:
+          conditions:
+            any:
+              - key: "{{ (request.object.spec.template.spec.volumes || `[]`)[?hostPath] | length(@) }}"
+                operator: GreaterThan
+                value: 0
+
+    - name: cronjob-host-path
+      match:
+        any:
+          - resources:
+              kinds:
+                - CronJob
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - kyverno
+      validate:
+        message: "HostPath volumes are not allowed; use a persistent volume or CSI driver instead."
+        deny:
+          conditions:
+            any:
+              - key: "{{ (request.object.spec.jobTemplate.spec.template.spec.volumes || `[]`)[?hostPath] | length(@) }}"
+                operator: GreaterThan
+                value: 0

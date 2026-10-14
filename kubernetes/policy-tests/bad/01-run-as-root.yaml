@@ -1,0 +1,36 @@
+# DELIBERATE VIOLATION - Policy 1 (no root).
+# Everything is compliant except the pod-level securityContext, which allows
+# root. Expected under enforcement: REJECTED by securecloud-disallow-root.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bad-run-as-root
+  namespace: securecloud
+  labels:
+    securecloud.io/policy-test: bad
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bad-run-as-root
+  template:
+    metadata:
+      labels:
+        app: bad-run-as-root
+    spec:
+      securityContext:
+        runAsNonRoot: false
+      containers:
+        - name: app
+          image: securecloud-backend:3.0.0
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsUser: 0
+            runAsGroup: 0
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            limits:
+              cpu: 100m
+              memory: 128Mi

@@ -1,0 +1,101 @@
+# Policy 7 - Host networking must not be enabled.
+#
+# Threat: hostNetwork=true shares the node's network namespace. The pod can reach
+# the kubelet, the node's metadata endpoint and other local services, bypasses
+# network policy, and can sniff/spoof node traffic - a direct path to node
+# compromise.
+#
+# Control: hostNetwork must not be true. Autogen is disabled on this policy and
+# the controller kinds are matched explicitly, because deny rules with
+# request.object paths are not safely translated for controllers.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: securecloud-disallow-host-network
+  labels:
+    app.kubernetes.io/part-of: securecloud
+  annotations:
+    pod-policies.kyverno.io/autogen-controllers: none
+    policies.kyverno.io/title: Disallow Host Networking
+    policies.kyverno.io/category: SecureCloud Baseline
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      hostNetwork must not be enabled on Pods or workload controllers.
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: pod-host-network
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - kyverno
+      validate:
+        message: "Host networking is not allowed: set spec.hostNetwork=false (or remove it)."
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.object.spec.hostNetwork || false }}"
+                operator: Equals
+                value: true
+
+    - name: controller-host-network
+      match:
+        any:
+          - resources:
+              kinds:
+                - Deployment
+                - StatefulSet
+                - DaemonSet
+                - Job
+                - ReplicaSet
+                - ReplicationController
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - kyverno
+      validate:
+        message: "Host networking is not allowed: set spec.template.spec.hostNetwork=false (or remove it)."
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.object.spec.template.spec.hostNetwork || false }}"
+                operator: Equals
+                value: true
+
+    - name: cronjob-host-network
+      match:
+        any:
+          - resources:
+              kinds:
+                - CronJob
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - kyverno
+      validate:
+        message: "Host networking is not allowed: set spec.jobTemplate.spec.template.spec.hostNetwork=false (or remove it)."
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.object.spec.jobTemplate.spec.template.spec.hostNetwork || false }}"
+                operator: Equals
+                value: true

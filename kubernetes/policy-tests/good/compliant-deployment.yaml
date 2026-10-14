@@ -1,0 +1,56 @@
+# COMPLIANT example - satisfies ALL eight baseline policies.
+# Expected under enforcement: ACCEPTED.
+#
+# Maps to the policies:
+#   1 no root          -> pod runAsNonRoot + container runAsUser 1001
+#   2 priv escalation  -> allowPrivilegeEscalation: false
+#   3 capabilities     -> capabilities.drop: [ALL]
+#   4 resource limits  -> resources.limits.cpu + memory
+#   5 no latest tag    -> securecloud-backend:3.0.0
+#   6 approved registry-> securecloud-* (local app image)
+#   7 no host networking-> hostNetwork absent (false)
+#   8 no hostPath      -> only an emptyDir volume
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: good-deployment
+  namespace: securecloud
+  labels:
+    securecloud.io/policy-test: good
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: good-deployment
+  template:
+    metadata:
+      labels:
+        app: good-deployment
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: securecloud-backend:3.0.0
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsUser: 1001
+            runAsGroup: 1001
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            limits:
+              cpu: 100m
+              memory: 128Mi
+            requests:
+              cpu: 50m
+              memory: 64Mi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

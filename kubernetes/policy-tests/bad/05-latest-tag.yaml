@@ -1,0 +1,36 @@
+# DELIBERATE VIOLATION - Policy 5 (no "latest" tag).
+# A floating tag means an unrelated push changes what runs and breaks rollback.
+# Expected under enforcement: REJECTED by securecloud-disallow-latest-tag.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bad-latest-tag
+  namespace: securecloud
+  labels:
+    securecloud.io/policy-test: bad
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bad-latest-tag
+  template:
+    metadata:
+      labels:
+        app: bad-latest-tag
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: app
+          image: securecloud-backend:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsUser: 1001
+            runAsGroup: 1001
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            limits:
+              cpu: 100m
+              memory: 128Mi

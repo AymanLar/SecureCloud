@@ -1,0 +1,38 @@
+# DELIBERATE VIOLATION - Policy 7 (host networking).
+# hostNetwork=true shares the node network namespace (reaches the kubelet and
+# node services, bypasses network policy). Expected under enforcement: REJECTED
+# by securecloud-disallow-host-network.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bad-host-network
+  namespace: securecloud
+  labels:
+    securecloud.io/policy-test: bad
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bad-host-network
+  template:
+    metadata:
+      labels:
+        app: bad-host-network
+    spec:
+      hostNetwork: true
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: app
+          image: securecloud-backend:3.0.0
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsUser: 1001
+            runAsGroup: 1001
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            limits:
+              cpu: 100m
+              memory: 128Mi

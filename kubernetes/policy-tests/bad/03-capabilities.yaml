@@ -1,0 +1,36 @@
+# DELIBERATE VIOLATION - Policy 3 (drop unnecessary capabilities).
+# Keeps NET_RAW and does not drop ALL. Expected under enforcement: REJECTED by
+# securecloud-require-drop-all-capabilities.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bad-capabilities
+  namespace: securecloud
+  labels:
+    securecloud.io/policy-test: bad
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bad-capabilities
+  template:
+    metadata:
+      labels:
+        app: bad-capabilities
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: app
+          image: securecloud-backend:3.0.0
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsUser: 1001
+            runAsGroup: 1001
+            capabilities:
+              add:
+                - NET_RAW
+          resources:
+            limits:
+              cpu: 100m
+              memory: 128Mi

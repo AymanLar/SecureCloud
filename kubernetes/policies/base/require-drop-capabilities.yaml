@@ -1,0 +1,73 @@
+# Policy 3 - Containers must drop unnecessary capabilities.
+#
+# Threat: Linux capabilities (NET_RAW, SYS_ADMIN, NET_ADMIN, ...) grant subsets
+# of root power without full root. NET_RAW enables ARP/ICMP spoofing, SYS_ADMIN
+# is a well-known container-escape enabler.
+#
+# Control: containers must drop ALL capabilities. Anything a workload genuinely
+# needs should be added back explicitly and narrowly.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: securecloud-require-drop-all-capabilities
+  labels:
+    app.kubernetes.io/part-of: securecloud
+  annotations:
+    policies.kyverno.io/title: Require Drop ALL Capabilities
+    policies.kyverno.io/category: SecureCloud Baseline
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      Containers must drop all Linux capabilities
+      (securityContext.capabilities.drop must be exactly [ALL]).
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: container-drop-all
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - kyverno
+      validate:
+        message: "Capabilities must be dropped: set securityContext.capabilities.drop=[ALL]."
+        pattern:
+          spec:
+            containers:
+              - securityContext:
+                  capabilities:
+                    drop:
+                      - ALL
+
+    - name: initcontainer-drop-all
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - kyverno
+      validate:
+        message: "Capabilities must be dropped on init containers: set securityContext.capabilities.drop=[ALL]."
+        pattern:
+          spec:
+            =(initContainers):
+              - securityContext:
+                  capabilities:
+                    drop:
+                      - ALL

@@ -1,0 +1,72 @@
+# Policy 4 - Containers must have CPU and memory limits.
+#
+# Threat: a workload without limits can consume all node CPU/memory (noisy
+# neighbour) or be trivially weaponised to starve every other pod on the node
+# (DoS). Requests also let the scheduler place pods sensibly.
+#
+# Control: every container and init container must declare non-empty
+# resources.limits.cpu and resources.limits.memory.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: securecloud-require-resource-limits
+  labels:
+    app.kubernetes.io/part-of: securecloud
+  annotations:
+    policies.kyverno.io/title: Require CPU and Memory Limits
+    policies.kyverno.io/category: SecureCloud Baseline
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      Containers must set resources.limits.cpu and resources.limits.memory.
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: container-limits
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - kyverno
+      validate:
+        message: "Resource limits are required: set resources.limits.cpu and resources.limits.memory."
+        pattern:
+          spec:
+            containers:
+              - resources:
+                  limits:
+                    cpu: "?*"
+                    memory: "?*"
+
+    - name: initcontainer-limits
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - kyverno
+      validate:
+        message: "Resource limits are required on init containers: set resources.limits.cpu and resources.limits.memory."
+        pattern:
+          spec:
+            =(initContainers):
+              - resources:
+                  limits:
+                    cpu: "?*"
+                    memory: "?*"

@@ -1,0 +1,64 @@
+# Policy 6 - Pods must use approved registries / images.
+#
+# Threat: pulling arbitrary images from the public internet widens the
+# supply-chain attack surface - anyone who can push to a tag or compromise a
+# registry can run code in your cluster. Typosquatting and dependency-confusion
+# images rely on unconstrained pulls.
+#
+# Control: images must come from an approved set. This list is intentionally
+# small and is the single place to extend when a new registry is onboarded.
+#   - securecloud-*                     : the locally built application images
+#   - postgres:* / docker.io/library/*  : the official PostgreSQL image
+#   - ghcr.io/*                         : approved internal registry (example)
+#
+# "where practical": this policy is scoped to the cluster and skips the system
+# namespaces. It is the first policy most organisations tailor to their own
+# registry, so it is documented as the easiest one to adjust.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: securecloud-restrict-image-registries
+  labels:
+    app.kubernetes.io/part-of: securecloud
+  annotations:
+    policies.kyverno.io/title: Restrict Image Registries
+    policies.kyverno.io/category: SecureCloud Baseline
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      Container images must originate from an approved registry or image name.
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: approved-images
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - kyverno
+      validate:
+        message: >-
+          Image is not from an approved registry. Allowed: securecloud-*,
+          postgres:*, docker.io/library/*, ghcr.io/*.
+        anyPattern:
+          - spec:
+              containers:
+                - image: "securecloud-*"
+          - spec:
+              containers:
+                - image: "postgres:*"
+          - spec:
+              containers:
+                - image: "docker.io/library/*"
+          - spec:
+              containers:
+                - image: "ghcr.io/*"

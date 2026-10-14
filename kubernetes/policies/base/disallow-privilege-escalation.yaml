@@ -1,0 +1,68 @@
+# Policy 2 - Privilege escalation must be disabled.
+#
+# Threat: allowPrivilegeEscalation=true lets a process gain more privileges than
+# its parent (for example via setuid/setgid binaries or file capabilities). It is
+# the classic way an unprivileged process becomes root inside a container.
+#
+# Control: every container and init container must set
+# allowPrivilegeEscalation=false explicitly.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: securecloud-disallow-privilege-escalation
+  labels:
+    app.kubernetes.io/part-of: securecloud
+  annotations:
+    policies.kyverno.io/title: Disallow Privilege Escalation
+    policies.kyverno.io/category: SecureCloud Baseline
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      Containers must set securityContext.allowPrivilegeEscalation=false.
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: container-allowprivilegeescalation
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - kyverno
+      validate:
+        message: "Privilege escalation is not allowed: set securityContext.allowPrivilegeEscalation=false."
+        pattern:
+          spec:
+            containers:
+              - securityContext:
+                  allowPrivilegeEscalation: false
+
+    - name: initcontainer-allowprivilegeescalation
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - kyverno
+      validate:
+        message: "Privilege escalation is not allowed: set securityContext.allowPrivilegeEscalation=false on init containers."
+        pattern:
+          spec:
+            =(initContainers):
+              - securityContext:
+                  allowPrivilegeEscalation: false

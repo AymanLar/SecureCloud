@@ -18,3 +18,9 @@ npm-debug.log*
 
 # Kubernetes: generated local secrets (never commit)
 kubernetes/overlays/*/secret.env
+
+# Supply chain (Phase 5): generated build artifacts + local Cosign key material.
+# The ephemeral private key used for the local sign/verify demo lives under
+# .supplychain/ and must NEVER be committed. CI signs keyless (no key at all).
+.supplychain/
+sbom/

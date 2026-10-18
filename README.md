@@ -5,10 +5,10 @@ deployments for them.
 
 This repository is built in phases. **Phase 1: application + Docker** ✅,
 **Phase 2: CI/CD + shift-left security** ✅, **Phase 3: local Kubernetes
-deployment** ✅, and **Phase 4: Kubernetes security & policy enforcement** ✅
-are complete. Authentication and infrastructure-as-code are intentionally not
-part of these phases, nor are runtime detection (Falco) or supply-chain signing
-(Cosign).
+deployment** ✅, **Phase 4: Kubernetes security & policy enforcement** ✅, and
+**Phase 5: software supply-chain security** ✅ are complete. Authentication and
+infrastructure-as-code are intentionally not part of these phases, nor is runtime
+detection (Falco).
 
 ## Stack
 
@@ -19,6 +19,7 @@ part of these phases, nor are runtime detection (Falco) or supply-chain signing
 | Database  | PostgreSQL 16                                           |
 | Tests     | pytest, FastAPI `TestClient`                            |
 | Security  | ruff, ESLint, Semgrep, Gitleaks, Trivy                  |
+| Supply chain | Syft (SBOM), Trivy CRITICAL gate, Cosign (sign/verify) |
 | Policy    | Kyverno (admission policies), K8s RBAC least privilege  |
 | CI/CD     | GitHub Actions (`.github/workflows/ci.yml`)             |
 | Runtime   | Docker Compose **and** Kubernetes (k3d, Phase 3)        |
@@ -165,8 +166,10 @@ pipeline in `docs/SECURITY-PIPELINE.md` — **every check below must pass**; a
 finding fails the workflow (no `continue-on-error` anywhere):
 
 ```text
-lint  ->  unit-tests  ->  sast  ->  secret-scan  ->  dependency-scan  ->  docker-build  ->  container-scan
-ruff + eslint       pytest         semgrep        gitleaks          trivy fs          docker compose    trivy image
+lint -> unit-tests -> sast -> secret-scan -> dependency-scan -> docker-build -> container-scan
+    -> sbom -> publish -> sign -> verify -> deploy
+ruff+eslint  pytest    semgrep   gitleaks     trivy fs       docker compose   trivy image (+ CRITICAL gate)
+                                                                          syft (SBOM)  cosign sign/verify
 ```
 
 | Check               | Tool                | Threshold                             |
@@ -177,6 +180,10 @@ ruff + eslint       pytest         semgrep        gitleaks          trivy fs    
 | Secret scan         | Gitleaks            | any leak                             |
 | Dependency scan     | Trivy fs            | HIGH/CRITICAL with a fix available   |
 | Container scan      | Trivy image         | HIGH/CRITICAL with a fix available   |
+| Container CRITICAL  | Trivy image         | **any CRITICAL** (no ignore-unfixed) |
+| SBOM                | Syft                | empty/malformed SBOM                 |
+| Signature           | Cosign              | unsigned image must be rejected      |
+| Deploy gate         | Cosign              | unsigned/tampered image never ships  |
 
 The full scanner-by-scanner guide, failure criteria, fix instructions, and
 local reproduction commands live in [**docs/SECURITY-PIPELINE.md**](docs/SECURITY-PIPELINE.md).
@@ -220,6 +227,29 @@ make rbac-review        # or: bash scripts/rbac-review.sh        (least privileg
 Threat model, per-policy threat/bad-example/policy/expected-result/secure-version
 documentation, and the RBAC findings live in
 [**docs/PHASE-4-KUBERNETES-SECURITY.md**](docs/PHASE-4-KUBERNETES-SECURITY.md).
+
+## Software supply-chain security (Phase 5)
+
+Every image is accounted for, scanned, signed and verified before it can ship.
+**Syft** generates a real SBOM (CycloneDX + SPDX) from the built images, **Trivy**
+enforces a hard **CRITICAL** gate (no `--ignore-unfixed`), and **Cosign** signs the
+pushed digests — **keyless in CI** via GitHub OIDC, or with a gitignored ephemeral
+key locally. Deployment re-verifies the signature, so an unsigned or tampered image
+never reaches the cluster.
+
+```bash
+make sbom             # or: bash scripts/sbom.sh           (Syft -> CycloneDX + SPDX)
+make scan-image       # or: bash scripts/scan-image.sh     (Trivy, fails on CRITICAL)
+make supply-chain     # or: bash scripts/supply-chain-test.sh  (full signed/unsigned demo)
+make sign-images      # or: bash scripts/image-sign.sh
+make verify-images    # or: bash scripts/image-verify.sh   (signed -> OK, unsigned -> REJECTED)
+make deploy-verified  # or: SC_VERIFY_IMAGES=1 bash scripts/deploy.sh
+```
+
+The demo proves both directions: a signed image **verifies**, and an unsigned image
+is **rejected**. Why signing alone is not security, the SBOM/scan/sign/verify model,
+the CI job chain, and the local reproduction steps live in
+[**docs/PHASE-5-SUPPLY-CHAIN.md**](docs/PHASE-5-SUPPLY-CHAIN.md).
 
 ## Running without Docker (development)
 
@@ -291,6 +321,10 @@ Everything documented here has been run and verified locally:
 | Kubernetes (k3d)          | cluster up; 3 workloads Ready; ingress /api + / serve; backend→PG read/write via Secret DSN (T1–T6) |
 | K8s policy (Kyverno)      | 8 policies: audit reports violations; enforce rejects all 8 bad manifests, accepts the compliant one (`make policy-test`) |
 | K8s RBAC                  | least privilege confirmed: no ClusterRoleBinding, no cluster-admin, tokens not auto-mounted, sensitive verbs denied (`make rbac-review`) |
+| SBOM                      | Syft generates real CycloneDX (backend 637 / frontend 1115 components) + SPDX (backend 1296) including `fastapi`/`sqlalchemy`/`next` (`make sbom`) |
+| Container CRITICAL gate   | our images pass clean; a CRITICAL image (`postgres:16.15-alpine`, `rancher/k3s`) fails with non-zero exit (`make scan-image`) |
+| Image signing             | Cosign signs by digest; signed image verifies, unsigned image is **rejected** (`make supply-chain`) |
+| Deploy signature gate     | `SC_VERIFY_IMAGES=1 make deploy-verified` refuses to apply an unverified image |
 
 ## Project structure
 
@@ -299,13 +333,16 @@ SecureCloud/
 ├── docker-compose.yml          # db + backend + frontend
 ├── .env.example                # configuration template (copy to .env)
 ├── requirements-tools.txt      # pinned dev/sec tools (keep in sync with ci.yml)
-├── Makefile                    # Phase 3/4 helpers: cluster-up/down, deploy, verify, kyverno, policies, rbac-review
-├── .github/workflows/ci.yml    # Phase 2 pipeline (7 chained jobs)
+├── Makefile                    # Phase 3/4/5 helpers: cluster, deploy, verify, kyverno, policies, rbac, supply-chain
+├── .github/workflows/ci.yml    # Phase 2+5 pipeline (12 chained jobs)
+├── .supplychain/               # gitignored: local Cosign key pair (never committed)
+├── sbom/                       # gitignored: generated CycloneDX/SPDX SBOMs
 ├── docs/
 │   ├── SECURITY-PIPELINE.md         # scanner guide + local reproduction commands
 │   ├── PHASE-3-KUBERNETES.md        # k3d deployment guide + security posture
-│   └── PHASE-4-KUBERNETES-SECURITY.md # threat model, policies, RBAC, policy-as-code
-├── scripts/                    # shell helpers (lib, cluster-up/down, deploy, status, logs, verify, kyverno-install, policy-test, rbac-review)
+│   ├── PHASE-4-KUBERNETES-SECURITY.md # threat model, policies, RBAC, policy-as-code
+│   └── PHASE-5-SUPPLY-CHAIN.md      # SBOM, CRITICAL gate, signing, verification
+├── scripts/                    # shell helpers (lib, cluster, deploy, verify, kyverno, policy, rbac, sbom, scan, sign, verify-images, supply-chain-test)
 ├── kubernetes/                 # manifests
 │   ├── base/                   # namespaced workloads (Deployments, StatefulSet, Services)
 │   ├── rbac/                   # per-workload ServiceAccounts (no token) + empty Role
@@ -343,5 +380,6 @@ SecureCloud/
 - **Phase 2:** CI/CD + shift-left security pipeline ✅
 - **Phase 3:** local Kubernetes deployment (k3d) ✅
 - **Phase 4:** Kubernetes security & policy enforcement (Kyverno + RBAC) ✅
+- **Phase 5:** software supply-chain security (SBOM + CRITICAL gate + Cosign signing/verification) ✅
 - Later phases: authentication, infrastructure-as-code, runtime detection
-  (Falco) & supply-chain signing (Cosign) — not implemented yet.
+  (Falco) — not implemented yet.

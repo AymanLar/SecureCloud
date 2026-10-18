@@ -68,7 +68,19 @@ docker build \
 echo "==> importing images into cluster '${K3D_CLUSTER_NAME}'"
 k3d image import --cluster "${K3D_CLUSTER_NAME}" "${BACKEND_IMAGE}" "${FRONTEND_IMAGE}"
 
-# 3. Apply -------------------------------------------------------------------
+# 3. Verify image signatures (opt-in deployment gate) -----------------------
+# When SC_VERIFY_IMAGES=1 (or `make deploy-verified`), every image must carry a
+# valid Cosign signature from a trusted identity before anything is applied.
+# This is the deployment-time guard: an unsigned or tampered image cannot roll out.
+if [ "${SC_VERIFY_IMAGES:-0}" = "1" ]; then
+  echo "==> verifying image signatures before deploy (SC_VERIFY_IMAGES=1)"
+  bash "${SCRIPTS_DIR}/image-verify.sh"
+  echo "    all images verified"
+else
+  echo "==> image signature verification skipped (run with SC_VERIFY_IMAGES=1 to enforce)"
+fi
+
+# 4. Apply -------------------------------------------------------------------
 echo "==> applying overlay: kubectl apply -k ${OVERLAY_DIR}"
 kubectl apply -k "${OVERLAY_DIR}"
 

@@ -1,12 +1,27 @@
-# SecureCloud CI/CD + shift-left security pipeline.
+# SecureCloud CI/CD + shift-left security + supply-chain pipeline.
 #
 # Pipeline (each job runs only after the previous one succeeds):
 #
-#   lint  ->  unit-tests  ->  sast  ->  secret-scan  ->  dependency-scan  ->  docker-build  ->  container-scan
+#   lint -> unit-tests -> sast -> secret-scan -> dependency-scan
+#        -> docker-build -> container-scan -> sbom -> publish -> sign -> verify -> deploy
+#
+#   Test/SAST     ruff, eslint, pytest, semgrep, gitleaks
+#   Dependency    trivy fs
+#   Build         docker compose build
+#   Trivy scan    trivy image (fails on CRITICAL)
+#   Generate SBOM Syft -> CycloneDX + SPDX (from the built images)
+#   Publish       push images to GHCR
+#   Sign          Cosign *keyless* (GitHub OIDC -> Fulcio -> Rekor)
+#   Verify        Cosign: unsigned image must be REJECTED, signed must be ACCEPTED
+#   Deploy        re-verifies the signature before anything rolls out
+#
+# Note on ordering: the requested flow lists "Sign" before "Publish". Cosign
+# stores the signature *in the registry alongside the image*, so the image must
+# be pushed before it can be signed. Publish therefore precedes Sign here.
 #
 # Tool versions are pinned in `env` and must be kept in sync with the
-# locally reproducible checks documented in docs/SECURITY-PIPELINE.md.
-# Local equivalents for every check are listed in that document.
+# locally reproducible checks documented in docs/SECURITY-PIPELINE.md and
+# docs/PHASE-5-SUPPLY-CHAIN.md.
 
 name: CI
 
@@ -30,6 +45,9 @@ env:
   SEMGREP_VERSION: "1.180.0"
   GITLEAKS_VERSION: "8.30.1"
   TRIVY_VERSION: "0.75.0"
+  SYFT_VERSION: "1.54.1"
+  COSIGN_VERSION: "3.1.3"
+  SC_VERSION: "3.0.0"
 
 jobs:
   lint:
@@ -183,7 +201,8 @@ jobs:
           # The compose file requires POSTGRES_* variables. Values are
           # generated per-run and never committed anywhere.
           export POSTGRES_USER="securecloud_ci"
-          export POSTGRES_PASSWORD="$(openssl rand -hex 32)"
+          POSTGRES_PASSWORD="$(openssl rand -hex 32)"
+          export POSTGRES_PASSWORD
           export POSTGRES_DB="securecloud"
           docker compose build backend frontend
 
@@ -228,3 +247,230 @@ jobs:
         run: |
           ./trivy image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
             --exit-code 1 securecloud-frontend
+
+      - name: Fail on CRITICAL container vulnerabilities (hard gate)
+        run: |
+          # A CRITICAL in a container stops the line, including ones with no
+          # published fix yet - there is no --ignore-unfixed on this gate.
+          ./trivy image --scanners vuln --severity CRITICAL --exit-code 1 securecloud-backend
+          ./trivy image --scanners vuln --severity CRITICAL --exit-code 1 securecloud-frontend
+
+  sbom:
+    needs: container-scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: images
+          path: .
+
+      - name: Load images
+        run: docker load < images.tar.gz
+
+      - name: Download and verify Syft
+        run: |
+          curl -sSL -o "syft_${SYFT_VERSION}_linux_amd64.tar.gz" \
+            "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz"
+          curl -sSL -o syft_checksums.txt \
+            "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_checksums.txt"
+          grep "linux_amd64.tar.gz" syft_checksums.txt > syft.sum
+          sha256sum -c syft.sum
+          tar -xzf "syft_${SYFT_VERSION}_linux_amd64.tar.gz" syft
+          echo "$PWD" >> "$GITHUB_PATH"
+
+      # The SBOM is built from the *shipped image* by scripts/sbom.sh, the same
+      # command developers run locally, in both required formats.
+      - name: Generate CycloneDX SBOM
+        run: SBOM_FORMAT=cyclonedx-json bash scripts/sbom.sh securecloud-backend securecloud-frontend
+
+      - name: Generate SPDX SBOM
+        run: SBOM_FORMAT=spdx-json bash scripts/sbom.sh securecloud-backend securecloud-frontend
+
+      - name: SBOM summary
+        run: ls -la sbom/
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sbom
+          path: sbom/
+          retention-days: 30
+
+  publish:
+    needs: sbom
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      backend: ${{ steps.push.outputs.backend }}
+      frontend: ${{ steps.push.outputs.frontend }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: images
+          path: .
+
+      - name: Load images
+        run: docker load < images.tar.gz
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Push images to GHCR (still unsigned)
+        id: push
+        run: |
+          set -euo pipefail
+          BASE="ghcr.io/$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')/securecloud"
+          echo "IMAGE_BASE=${BASE}" >> "$GITHUB_ENV"
+
+          for svc in backend frontend; do
+            docker tag "securecloud-${svc}" "${BASE}/${svc}:${SC_VERSION}"
+            docker push "${BASE}/${svc}:${SC_VERSION}"
+          done
+
+          # Record the pushed digests so the signer signs exact bytes, not a tag.
+          for svc in backend frontend; do
+            digest="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' \
+              "${BASE}/${svc}:${SC_VERSION}" | grep -F "${BASE}/${svc}@" | head -n 1)"
+            echo "${svc}=${digest}" >> "$GITHUB_OUTPUT"
+            echo "pushed ${digest}"
+          done
+
+  sign:
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # keyless signing: GitHub issues the OIDC token
+    env:
+      SC_COSIGN_CERT_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/ci.yml@
+      SC_COSIGN_OIDC_ISSUER: https://token.actions.githubusercontent.com
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Download and verify Cosign
+        run: |
+          curl -sSL -o cosign "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"
+          curl -sSL -o cosign_checksums.txt \
+            "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign_checksums.txt"
+          grep -E "  cosign-linux-amd64$" cosign_checksums.txt > cosign.sum
+          sha256sum -c cosign.sum
+          chmod +x cosign
+          echo "$PWD" >> "$GITHUB_PATH"
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      # Verification BEFORE signing: the image we just pushed carries no
+      # signature yet, so it must be rejected. This is the "unsigned ->
+      # verification fails" half of the demonstration.
+      - name: "Verification: unsigned image must be REJECTED"
+        id: unsigned
+        run: |
+          set +e
+          bash scripts/image-verify.sh "ghcr.io/$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')/securecloud/backend:${SC_VERSION}"
+          rc=$?
+          set -e
+          echo "rc=${rc}"
+          if [ "${rc}" -eq 0 ]; then
+            echo "::error::unsigned image verified successfully - signature enforcement is broken"
+            exit 1
+          fi
+          echo "OK: unsigned image was rejected by cosign verify"
+
+      # Keyless: no private key exists anywhere. GitHub's OIDC identity is
+      # exchanged for a short-lived Fulcio cert; the signature + cert are
+      # appended to Rekor and stored with the image in GHCR.
+      - name: Sign images (keyless)
+        run: |
+          set -euo pipefail
+          cosign sign --yes "${{ needs.publish.outputs.backend }}"
+          cosign sign --yes "${{ needs.publish.outputs.frontend }}"
+
+  verify:
+    needs: [publish, sign]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+    env:
+      SC_COSIGN_CERT_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/ci.yml@
+      SC_COSIGN_OIDC_ISSUER: https://token.actions.githubusercontent.com
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Download and verify Cosign
+        run: |
+          curl -sSL -o cosign "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"
+          curl -sSL -o cosign_checksums.txt \
+            "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign_checksums.txt"
+          grep -E "  cosign-linux-amd64$" cosign_checksums.txt > cosign.sum
+          sha256sum -c cosign.sum
+          chmod +x cosign
+          echo "$PWD" >> "$GITHUB_PATH"
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      # The "signed -> verification succeeds" half of the demonstration.
+      - name: "Verification: signed image must be ACCEPTED"
+        run: |
+          set -euo pipefail
+          BASE="ghcr.io/$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')/securecloud"
+          bash scripts/image-verify.sh "${BASE}/backend:${SC_VERSION}" "${BASE}/frontend:${SC_VERSION}"
+
+  deploy:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: deploy
+    permissions:
+      contents: read
+      packages: read
+      deployments: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Download and verify Cosign
+        run: |
+          curl -sSL -o cosign "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"
+          curl -sSL -o cosign_checksums.txt \
+            "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign_checksums.txt"
+          grep -E "  cosign-linux-amd64$" cosign_checksums.txt > cosign.sum
+          sha256sum -c cosign.sum
+          chmod +x cosign
+          echo "$PWD" >> "$GITHUB_PATH"
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      # Deployment gate: an unsigned or tampered image never reaches the cluster.
+      - name: Verify image signatures (deployment gate)
+        env:
+          SC_COSIGN_CERT_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/ci.yml@
+          SC_COSIGN_OIDC_ISSUER: https://token.actions.githubusercontent.com
+        run: |
+          set -euo pipefail
+          BASE="ghcr.io/$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')/securecloud"
+          bash scripts/image-verify.sh "${BASE}/backend:${SC_VERSION}" "${BASE}/frontend:${SC_VERSION}"
+
+      - name: Apply manifests (when a cluster is configured)
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          if [ -n "${KUBE_CONFIG}" ]; then
+            mkdir -p "$HOME/.kube"
+            echo "${KUBE_CONFIG}" > "$HOME/.kube/config"
+            kubectl apply -k kubernetes/overlays/local
+            kubectl -n securecloud rollout status deploy/securecloud-backend --timeout=300s
+            kubectl -n securecloud rollout status deploy/securecloud-frontend --timeout=300s
+          else
+            echo "Signature gate passed. No KUBE_CONFIG secret configured, so no cluster to apply to."
+          fi

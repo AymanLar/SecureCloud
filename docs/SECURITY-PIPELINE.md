@@ -9,6 +9,10 @@ The pipeline is a single GitHub Actions workflow:
 ```text
 lint  ->  unit-tests  ->  sast  ->  secret-scan  ->  dependency-scan  ->  docker-build  ->  container-scan
 ruff + eslint         pytest       semgrep        gitleaks          trivy fs          docker compose    trivy image
+                                                                                                       + CRITICAL gate
+        ->  sbom  ->  publish  ->  sign  ->  verify  ->  deploy
+         syft        ghcr push   cosign    cosign      cosign verify
+         (SBOM)      (digests)   keyless   (signed OK) (gate) + apply
 ```
 
 Every job runs only after the previous one succeeds (`needs` chain), so a
@@ -16,6 +20,11 @@ finding anywhere above stops the pipeline. There is no `continue-on-error`;
 a security finding fails the workflow. The workflow lives in
 [`.github/workflows/ci.yml`](../.github/workflows/ci.yml). All tool versions
 are pinned there and in the local manifests, so CI and local checks agree.
+
+Stages 1–7 are the shift-left security pipeline (Phases 1–2). The supply-chain
+stages (Phase 5) — the CRITICAL gate, SBOM, signing, verification and the deploy
+gate — are documented in
+[PHASE-5-SUPPLY-CHAIN.md](PHASE-5-SUPPLY-CHAIN.md) and summarised in §1.7 below.
 
 ---
 
@@ -111,6 +120,23 @@ tag or trim build-only tooling; this project already drops the base image's
 bundled `npm` from the frontend runtime stage to remove its (unpatched)
 npm-tooling CVEs.
 
+### 1.7 Supply-chain stages (Phase 5)
+
+| Job | Tool | Fails when |
+| --- | --- | --- |
+| `container-scan` (CRITICAL gate) | Trivy image | **any** CRITICAL is found, including ones with no published fix (no `--ignore-unfixed`) |
+| `sbom` | Syft | the SBOM is empty, truncated, or missing a known application dependency |
+| `sign` (pre-check) | Cosign | the just-pushed image **verifies** — an unsigned image must be rejected |
+| `verify` | Cosign | a signed image **fails** verification — a trusted signature must be accepted |
+| `deploy` | Cosign | the image signature does not verify before anything is applied |
+
+The CRITICAL gate is stricter than the two existing image scans (which only gate
+*fixable* HIGH/CRITICAL). It exists because a CRITICAL in a container you are about
+to run is a stop-the-line event regardless of whether a patch exists yet. Signing is
+**keyless** (GitHub OIDC → Fulcio → Rekor); no private key or registry password is
+ever stored. Full model, threat table, and local reproduction are in
+[PHASE-5-SUPPLY-CHAIN.md](PHASE-5-SUPPLY-CHAIN.md).
+
 ---
 
 ## 2. Reproduce every check locally
@@ -203,6 +229,30 @@ unzip -o trivy.zip -d trivy
 On Linux (as used in CI), substitute `_linux_x64.tar.gz` / `_Linux-64bit.tar.gz`
 and `tar -xzf` instead of unzip.
 
+### 2.7 Supply-chain checks (Syft + Cosign)
+
+Install the pinned binaries the same way as above (checksum-verified), put them on
+`PATH`, then run the scripts — the exact commands CI runs:
+
+```bash
+# Syft (pin to SYFT_VERSION in the workflow env) -> SBOM, both formats
+SBOM_FORMAT=cyclonedx-json bash scripts/sbom.sh securecloud-backend:3.0.0
+SBOM_FORMAT=spdx-json      bash scripts/sbom.sh securecloud-backend:3.0.0
+
+# Trivy CRITICAL gate (fails on any CRITICAL, including unfixed)
+bash scripts/scan-image.sh securecloud-backend:3.0.0
+
+# Full signed/unsigned demonstration against a local registry
+bash scripts/supply-chain-test.sh
+
+# Individual sign / verify (local ephemeral key)
+bash scripts/image-sign.sh
+bash scripts/image-verify.sh
+
+# Deploy only after the signature gate passes
+SC_VERIFY_IMAGES=1 bash scripts/deploy.sh
+```
+
 ---
 
 ## 3. Known limitations and tracked risk
@@ -234,12 +284,16 @@ the reasons — documented so they stay visible rather than silently ignored.
 
 ## 4. Pipeline hygiene
 
-- **Least privilege:** workflow-wide `permissions: contents: read`; no secrets,
-  no registry push, no `packages:` write scope are used anywhere.
+- **Least privilege:** workflow-wide `permissions: contents: read`; no secrets
+  are stored. Only the jobs that need them request extra scope — `publish`/`sign`
+  add `packages: write`, `sign` adds `id-token: write` **solely** for keyless OIDC
+  signing, and `verify`/`deploy` add `packages: read`.
 - **Pinned actions:** every GitHub Action is pinned by commit SHA with a `# vN`
   tag comment. Update by re-resolving the tag and checking the diff.
 - **Pinned tools:** `requirements-tools.txt` and the workflow `env` block pin
-  ruff, semgrep, gitleaks, and trivy. Keep the two in sync; there is a comment
-  in each file reminding you.
+  ruff, semgrep, gitleaks, trivy, syft, and cosign. Keep the two in sync; there
+  is a comment in each file reminding you.
+- **No committed keys:** the only signing key material (the local ephemeral Cosign
+  key) lives in the gitignored `.supplychain/` directory; CI signing is keyless.
 - **No `continue-on-error`:** every check above must pass for the pipeline to
   go green. `workflow_dispatch` allows manual re-runs.

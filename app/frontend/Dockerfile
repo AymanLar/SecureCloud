@@ -11,6 +11,11 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
+# Keep only runtime dependencies in the shipped image: dev tooling (eslint,
+# typescript, @types, eslint-config-next and its transitive deps) is build-only
+# and must not ship. This also removes dev-only CVEs from the image scan.
+RUN npm prune --omit=dev
+
 FROM node:22-alpine AS runner
 
 WORKDIR /app

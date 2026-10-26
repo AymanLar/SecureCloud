@@ -79,7 +79,9 @@ inventory includes `fastapi`, `sqlalchemy` and `psycopg`, and the frontend inclu
 `next` and `react` — plus their transitive dependencies and the OS packages from
 the base image. `scripts/sbom.sh` asserts this (a component count floor **and** a
 check for a known application dependency) so an empty or truncated SBOM cannot pass
-silently.
+silently. The frontend runtime image prunes devDependencies (`npm prune --omit=dev`
+in the Dockerfile), so build-only tooling (ESLint, TypeScript, `eslint-config-next`
+and its transitive deps) is never inventoried because it is never shipped.
 
 ### 2.2 Container vulnerability scanning — the CRITICAL gate
 
@@ -241,8 +243,8 @@ All results below are from running the scripts locally on this repository.
 
 ```
 ==> SBOM for securecloud-backend:3.0.0 (cyclonedx-json)  OK: 637 components,  includes 'fastapi'
-==> SBOM for securecloud-frontend:3.0.0 (cyclonedx-json) OK: 1115 components, includes 'next'
 ==> SBOM for securecloud-backend:3.0.0 (spdx-json)       OK: 1296 components, includes 'fastapi'
+==> SBOM for securecloud-frontend:3.0.0 (cyclonedx-json) OK: includes 'next'
 ```
 
 The inventories include the actual runtime stack (`fastapi`, `sqlalchemy`,

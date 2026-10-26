@@ -321,7 +321,7 @@ Everything documented here has been run and verified locally:
 | Kubernetes (k3d)          | cluster up; 3 workloads Ready; ingress /api + / serve; backend→PG read/write via Secret DSN (T1–T6) |
 | K8s policy (Kyverno)      | 8 policies: audit reports violations; enforce rejects all 8 bad manifests, accepts the compliant one (`make policy-test`) |
 | K8s RBAC                  | least privilege confirmed: no ClusterRoleBinding, no cluster-admin, tokens not auto-mounted, sensitive verbs denied (`make rbac-review`) |
-| SBOM                      | Syft generates real CycloneDX (backend 637 / frontend 1115 components) + SPDX (backend 1296) including `fastapi`/`sqlalchemy`/`next` (`make sbom`) |
+| SBOM                      | Syft generates real CycloneDX + SPDX including `fastapi`/`sqlalchemy`/`next`; the frontend runtime image ships production-only deps (`make sbom`) |
 | Container CRITICAL gate   | our images pass clean; a CRITICAL image (`postgres:16.15-alpine`, `rancher/k3s`) fails with non-zero exit (`make scan-image`) |
 | Image signing             | Cosign signs by digest; signed image verifies, unsigned image is **rejected** (`make supply-chain`) |
 | Deploy signature gate     | `SC_VERIFY_IMAGES=1 make deploy-verified` refuses to apply an unverified image |

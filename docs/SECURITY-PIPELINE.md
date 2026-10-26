@@ -118,7 +118,9 @@ Fails when: addressing HIGH/CRITICAL vulns are found, same thresholds as fs.
 How to fix: rebuild and rescan. For base-image problems, bump the base image
 tag or trim build-only tooling; this project already drops the base image's
 bundled `npm` from the frontend runtime stage to remove its (unpatched)
-npm-tooling CVEs.
+npm-tooling CVEs, and prunes devDependencies (`npm prune --omit=dev`) so
+build-only tooling (ESLint, TypeScript, `eslint-config-next` and its transitive
+deps) never ships in the image at all.
 
 ### 1.7 Supply-chain stages (Phase 5)
 
